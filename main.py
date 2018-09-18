@@ -19,20 +19,49 @@ hdlr = logging.FileHandler('wowdrp.log')
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 hdlr.setFormatter(formatter)
 logger.addHandler(hdlr)
-logger.setLevel(logging.WARNING)
+hdlr.setLevel(logging.INFO)
+
+def tweak_color_channel_by_offset(color, offset):
+    if color == 0:
+        return color
+        
+    return color + offset
+
+def get_channel_index(channel):
+    if channel.lower() == 'r':
+        return 0
+    elif channel.lower() == 'g':
+        return 1
+    elif channel.lower() == 'b':
+        return 2
+    else:
+        raise ValueError("Unknown color channel: {0}".format(channel))
+
+# NOTE: Returns separators as well!
+def get_next_character(pixels, channel, last_char=None):
+    channel_index = get_channel_index(channel)
+
+    if last_char is None:
+        return (pixels[0][channel_index], 0)
+        
+    last_char_value = last_char[0]
+    last_char_index = last_char[1]
+        
+    i = last_char_index + 1
+    while i < len(pixels):
+        value = pixels[i][channel_index]
+        if value == last_char_value:
+            i = i + 1
+            continue
+        else:
+            return (value, i)
+            
+    return None
 
 def iterate_pixels(pixels, channel):
     line = ""
     wait_for_null = False
-
-    if channel.lower() == 'r':
-        channel_index = 0
-    elif channel.lower() == 'g':
-        channel_index = 1
-    elif channel.lower() == 'b':
-        channel_index = 2
-    else:
-        raise ValueError("Unknown color channel: {0}".format(channel))
+    channel_index = get_channel_index(channel)
 
     for p in pixels:
         channels = p
@@ -47,14 +76,40 @@ def iterate_pixels(pixels, channel):
             wait_for_null = True
 
     return line
+    
+def calibrate_brightness_offset(pixels):
+    # The first expected character is NULL. If it's already null, there's
+    # no calibration needed.
+    if pixels[0][0] == 0:
+        # Already at null.
+        return pixels
+        
+    first_char = get_next_character(pixels, 'r')
+    next_char = get_next_character(pixels, 'r', first_char)[0]
+    
+    # first_char is expected to be NULL, while next_char is expected to be
+    # msg_header[0]. If the first ISN'T null, the user upped their brightness
+    # and changed the meaning of some colours. Use the offset on msg_header[0]
+    # to tweak all the array's values. (Since the user can also LOWER
+    # their brightness)
+    offset = ord(msg_header[0]) - next_char
+    new_pixels = []
+    
+    for pixel in pixels:
+        new_pixel = tuple(map(lambda x: tweak_color_channel_by_offset(x, offset), pixel))
+        new_pixels.append(new_pixel)
+        
+    return new_pixels
 
 # reads message character by character using all 3 color channels
 def parse_pixels(pixels):
+    pixels = calibrate_brightness_offset(pixels)
+
     msg = ""
     msg += iterate_pixels(pixels, 'r')
     msg += iterate_pixels(pixels, 'g')
     msg += iterate_pixels(pixels, 'b')
-    logger.info("Raw message: %s" % (msg,))
+    logger.info("Raw message[{0}]: {1}".format(len(msg), msg))
     return msg
 
 
